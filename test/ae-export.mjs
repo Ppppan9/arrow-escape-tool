@@ -21,7 +21,7 @@ for (const n of ['build_ae_project.jsx', 'timeline.json', 'README_AE.md', 'audio
 ok(info.stats.lines === 200 && info.names.filter(n => n.endsWith('_箭头')).length === 200, '200 条线各自一个形状图层 + 200 个箭头图层');
 ok(info.l1.out < info.duration && info.l1.te > 2 && info.l1.parent === 'cam', `已挪走的线 2：修剪路径关键帧 ${info.l1.ts}/${info.l1.te}，出点 ${info.l1.out}s，父级 = 镜头`);
 ok(info.l12.col && info.l12.col.hold && info.l12.col.t.length >= 2 && info.l12.out >= info.duration - 0.05, `被挡的线 12：颜色定格关键帧 ${JSON.stringify(info.l12.col).slice(0, 120)}，冲撞修剪关键帧 ${JSON.stringify(info.l12.ts).slice(0, 80)}`);
-ok(info.cam.pos >= 3 && Math.abs(info.cam.sc[0] - 164.7) < 1, `镜头空对象：位置关键帧 ${info.cam.pos}，缩放 ${info.cam.sc}`);
+ok(info.cam.pos >= 3 && Math.abs(info.cam.sc[0][0] - 164.7) < 1, `镜头空对象：位置关键帧 ${info.cam.pos}，缩放 ${info.cam.sc}`);
 ok(info.names.some(n => n.startsWith('点击波纹')) && info.names.includes('手指') && info.names.includes('被挡边框红光') && info.names.includes('混合音轨'), '波纹 / 手指 / 边框红光 / 音频图层');
 // Node 模拟 AE 运行 jsx
 const dir = '/tmp/ae_unzip'; fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir); execSync(`cd ${dir} && unzip -q ${process.cwd()}/${zipPath}`);

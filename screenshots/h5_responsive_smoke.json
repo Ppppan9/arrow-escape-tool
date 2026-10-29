@@ -1,0 +1,54 @@
+{
+  "results": [
+    {
+      "name": "iPhone 12/13",
+      "width": 390,
+      "height": 844,
+      "pass": true,
+      "metrics": {
+        "stage": {
+          "w": 390,
+          "h": 693,
+          "top": 75.5,
+          "left": 0,
+          "visible": true
+        },
+        "cta": {
+          "w": 390,
+          "h": 63.1875,
+          "top": 780.8125,
+          "bottom": 844,
+          "visible": true
+        },
+        "wrap": {
+          "w": 390,
+          "h": 844
+        },
+        "layout": {
+          "designW": 720,
+          "designH": 1280,
+          "cssW": 390,
+          "cssH": 693,
+          "scale": 0.5416666666666666,
+          "orientation": 1,
+          "availW": 390,
+          "availH": 780,
+          "ctaH": 64,
+          "vw": 390,
+          "vh": 844
+        },
+        "vw": 390,
+        "vh": 844,
+        "overflowX": false,
+        "overflowY": false,
+        "bodyBg": "rgb(18, 28, 31)",
+        "hasFit": true,
+        "playableCss": true
+      },
+      "letterbox": "bottom-or-cta",
+      "nonBlack": 0.9999481999482,
+      "checks": []
+    }
+  ],
+  "ok": true
+}
