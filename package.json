@@ -1,6 +1,6 @@
 {
   "name": "arrow-escape-tool",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "箭头挪出核玩工具（单文件离线版）",
   "type": "module",
   "scripts": {

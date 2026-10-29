@@ -1,6 +1,6 @@
 // 箭头挪出核玩工具 —— 设置定义（中文标签），版本号 + 迁移。通用分组 / 键名按 game-toolkit-standard/TOOLKIT_STANDARD.md
 import { h5DeviceSelectOptions } from './h5/index.js';
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.0.1';
 export const SETTINGS_VERSION = 1;
 export const STORE_KEY = 'arrowEscapeTool.settings';
 export const APP_ID = 'arrow-escape-tool';
@@ -106,7 +106,7 @@ export const GROUPS = [
     ['sfxMute', '静音', 'bool', false],
     ['sfxVolume', '总音量', 'range', 0.8, 0, 1.5, 0.01],
     ['sfxDelay', '音效相对线开始动的延迟(秒，参考≈0.09)', 'range', 0.09, 0, 0.5, 0.01],
-    ['sfxVoice', '开场配音“谁能把箭头全部挪出来？我就彻底服他。”（从参考视频提取）', 'bool', true],
+    ['sfxVoice', '开场配音“谁能把箭头全部挪出来？我就彻底服他。”（可选；从参考视频提取，默认关闭）', 'bool', false],
     ['sfxVoiceVol', '开场配音 音量', 'range', 1, 0, 2, 0.01],
     ['voiceAt', '配音开始时刻(秒)', 'range', 0, 0, 5, 0.05],
     ['sfxSlide', '挪出“嗖”', 'bool', true],
