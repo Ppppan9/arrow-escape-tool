@@ -1,7 +1,7 @@
 // 箭头挪出核玩工具 —— 设置定义（中文标签），版本号 + 迁移。通用分组 / 键名按 game-toolkit-standard/TOOLKIT_STANDARD.md
 import { h5DeviceSelectOptions } from './h5/index.js';
 export const APP_VERSION = '1.0.1';
-export const SETTINGS_VERSION = 1;
+export const SETTINGS_VERSION = 2;
 export const STORE_KEY = 'arrowEscapeTool.settings';
 export const APP_ID = 'arrow-escape-tool';
 const ALL8 = 'applovin,facebook,google,mintegral,moloco,tiktok,unity,generic';
@@ -194,7 +194,7 @@ export const GROUPS = [
 export const DEFS = {};
 for (const [, items] of GROUPS) for (const it of items) if (it[2] !== 'button') DEFS[it[0]] = it[3];
 // migrate：只补默认值、把仍等于旧默认值的项换成新默认、旧键→新键；不覆盖用户改过的值
-export const OLD_DEFAULTS = { /* 版本 → { 键: 旧默认 } */ };
+export const OLD_DEFAULTS = { 2: { sfxVoice: true } };
 export function migrate(obj) {
   if (!obj || typeof obj !== 'object') return { ...DEFS };
   let v = obj.version || 0; const s = { ...(obj.settings || obj) };
