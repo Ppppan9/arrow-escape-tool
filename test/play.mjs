@@ -26,14 +26,14 @@ await advance(p, 0.5);
 const box = await p.locator('#stage').boundingBox();
 let taps = 0, blocked = 0, real = 0, guard = 0;
 while (guard++ < 2000) {
-  const st = await ev(() => { const g = __game; const idle = g.G.idleIds(); if (!idle.length) return null; const id = idle[Math.floor(Math.random() * idle.length)], l = g.G.lines[id], q = l.p[Math.floor(Math.random() * l.p.length)]; const [dx, dy] = g.cellToDesign(q[0], q[1]); const v = g.view, S = g.S, K = Math.min(S.canvasW / 720, S.canvasH / 1280); return { id, x: (dx - v.x0) * K / S.canvasW, y: (dy - v.y0) * K / S.canvasH, free: g.G.free(id) }; });
+  const st = await ev(() => { const g = __game; const idle = g.G.idleIds(); if (!idle.length) return null; const fr = g.G.freeIds(), pool = Math.random() < 0.15 || !fr.length ? idle : fr, id = pool[Math.floor(Math.random() * pool.length)], l = g.G.lines[id], q = l.p[Math.floor(Math.random() * l.p.length)]; const [dx, dy] = g.cellToDesign(q[0], q[1]); const v = g.view, S = g.S, K = Math.min(S.canvasW / 720, S.canvasH / 1280); return { id, x: (dx - v.x0) * K / S.canvasW, y: (dy - v.y0) * K / S.canvasH, free: g.G.free(id) }; });
   if (!st) { const w = await advance(p, 2); if (w.left === 0) break; continue; }
   const before = await ev(() => __game.G.lines.map(l => l.state).join());
   await p.mouse.click(box.x + st.x * box.width, box.y + st.y * box.height); real++;
   await advance(p, 0.05);
   const after = await ev(id => __game.G.lines[id].state, st.id);
   taps++; if (!st.free) { blocked++; if (after !== 'bump') { ok(false, `被挡线点击后应冲撞, 实际 ${after}`); break; } } else if (after !== 'out' && after !== 'gone') { ok(false, `可走线点击后应滑出, 实际 ${after} (line ${st.id})`); break; }
-  await advance(p, st.free ? 0.05 : 0.6);
+  await advance(p, st.free ? 0.02 : 0.6);
 }
 await advance(p, 3);
 r = await ev(() => ({ left: __game.G.lines.filter(l => l.state !== 'gone').length, win: __game.G.winT, fin: window.__finished }));
@@ -70,13 +70,16 @@ r = await ev(() => { const g = __game, e = g.editor; e.lines = []; e.cols = 6; e
   return { n: e.lines.length, info: document.getElementById('edInfo').textContent };
 });
 ok(r.n === 3 && r.info.includes('可全部挪出'), `编辑器画线 + 可解检查（${r.info}）`);
-r = await ev(() => { const g = __game; g.editorDown(...g.cellToDesign(0, 2)); g.editorUp(); return g.editor.lines.length; }); // 画线工具在已有格上点 → 不新增
-await ev(() => { document.querySelector('#edTools button[data-t=reverse]').click(); const g = __game; g.editorDown(...g.cellToDesign(1, 2)); g.editorUp(); });
+// 一行里两条面对面的线 → 互相卡死
+await ev(() => { const g = __game, D = (c, r) => g.cellToDesign(c, r); g.editorDown(...D(0, 0)); g.editorMove(...D(1, 0)); g.editorUp(); g.editorDown(...D(4, 0)); g.editorMove(...D(3, 0)); g.editorUp(); });
 r = await ev(() => document.getElementById('edInfo').textContent);
-ok(r.includes('不可解'), `反向后检查出不可解（${r}）`);
-await ev(() => { document.querySelector('#edTools button[data-t=reverse]').click(); const g = __game; g.editorDown(...g.cellToDesign(1, 2)); g.editorUp(); __game.closeEditor(true); });
+ok(r.includes('不可解'), `面对面的两条线 → 检查出不可解（${r}）`);
+await ev(() => { document.querySelector('#edTools button[data-t=reverse]').click(); const g = __game; g.editorDown(...g.cellToDesign(4, 0)); g.editorUp(); });
+r = await ev(() => document.getElementById('edInfo').textContent);
+ok(r.includes('可全部挪出'), `反向其中一条 → 可解（${r}）`);
+await ev(() => __game.closeEditor(true));
 r = await ev(() => ({ lj: JSON.parse(__game.S.levelJson).lines.length, n: __game.G.lines.length, solv: __game.G.solvable }));
-ok(r.lj === 3 && r.n === 3 && r.solv, '编辑器保存为关卡 JSON 并可玩');
+ok(r.lj === 5 && r.n === 5 && r.solv, '编辑器保存为关卡 JSON 并可玩');
 await ev(() => __game.levelRef()); r = await ev(() => __game.G.lines.length); ok(r === 200, '恢复参考关卡');
 
 // ---- 设置导出 / 导入（含旧版本迁移）----
