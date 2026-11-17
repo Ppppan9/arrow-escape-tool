@@ -380,7 +380,8 @@ try {
       let aeCapped = false;
       const capAe = (gameSec) => {
         if (aeCapped) return;
-        const sec = gameSec != null ? gameSec : (Date.now() - t0) / 1000;
+        const wall = (Date.now() - t0) / 1000;
+        const sec = Math.max(wall, gameSec != null ? gameSec : 0);
         if (sec < 12) return;
         aeCapped = true;
         const fn = g.aeStop || (window.__app && window.__app.aeStop) || window.__aeStop;
