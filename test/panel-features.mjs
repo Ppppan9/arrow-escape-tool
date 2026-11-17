@@ -328,6 +328,7 @@ try {
       // Live object, not a shallow copy — getters like F/G must stay live.
       const g = window.__game || window.__app || window.__tool || {};
       const S = (typeof window.__S === 'function' ? window.__S() : null) || g.S || window.S || {};
+      try { window.__failed = false; window.__finished = false; window.__win = false; } catch (e) {}
       const id = String(g.APP_ID || g.TOOL_ID || (window.__app && window.__app.TOOL_ID) || S.app || '');
       const speed = {
         autoMode: 'video', handShow: false,
