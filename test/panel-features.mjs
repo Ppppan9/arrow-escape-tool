@@ -317,89 +317,98 @@ try {
     }
   } catch (e) { rec('settings-import-restore', false, e.message); }
 
-  // ---- auto-solve runs to a win (official fast path when available) ----
+  // ---- auto-solve runs to a win (official in-page pump; do not IPC every frame) ----
+  page.setDefaultTimeout(180000);
   try {
-    await page.evaluate(() => {
-      const g = (typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || {}));
-      const S = g.S || window.S || {};
+    const limit = +(process.env.AUTO_WIN_MS || 180000);
+    const st = await page.evaluate(async (limit) => {
+      // Live object, not a shallow copy — getters like F/G must stay live.
+      const g = window.__game || window.__app || window.__tool || {};
+      const S = (typeof window.__S === 'function' ? window.__S() : null) || g.S || window.S || {};
       const speed = {
+        autoMode: 'video', handShow: false,
         animScale: 0.15, flyMs: 40, flyDuration: 40, handSpeed: 8, autoSpeed: 6, timerSec: 120,
         moveMs: 40, animMs: 40, stepMs: 30, autoDelay: 10, fingerMs: 40,
         autoWait: 10, recAuto: false, aeWithRec: false, endCard: false,
         cupInterval: 40, cupFly: 40, boxGrow: 40, boxClose: 40, boxFlyDur: 40, slideSpeed: 8,
         introSec: 0.05, chainSpeed: 8,
       };
-      // Prefer per-key set(); zipper setMany also restarts the game.
+      const hasAdvance = typeof g.advance === 'function';
       if (typeof g.set === 'function') {
         for (const [k, v] of Object.entries(speed)) { try { g.set(k, v); } catch (e) {} }
+      } else if (typeof g.setMany === 'function') {
+        try { g.setMany(speed); } catch (e) {}
       } else {
-        for (const [k, v] of Object.entries(speed)) if (k in S) S[k] = v;
+        for (const [k, v] of Object.entries(speed)) if (S && k in S) S[k] = v;
+      }
+      if (typeof g.renderAt === 'function') {
+        try { window.__T = window.__T || 2e6; g.renderAt(window.__T); } catch (e) {}
       }
       if (typeof g.newGame === 'function') { try { g.newGame(); } catch (e) { try { g.newGame(true); } catch (e2) {} } }
       const startAe = g.aeStart || window.__aeStart;
-      if (typeof startAe === 'function') { try { startAe(); } catch (e) {} }
-    });
-    await page.waitForTimeout(200);
-    await page.evaluate(() => {
-      const g = (typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || {}));
-      if (typeof g.startAuto === 'function') g.startAuto();
-      else if (typeof g.autoSolve === 'function') g.autoSolve();
-    });
-    const t0 = Date.now();
-    const limit = +(process.env.AUTO_WIN_MS || 180000);
-    const caps = await page.evaluate(() => {
-      const g = (typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || {}));
-      return { advance: typeof g.advance === 'function', renderAt: typeof g.renderAt === 'function' };
-    });
-    if (caps.renderAt) {
-      await page.evaluate(() => { window.__nodraw = true; });
-    }
-    let win = false, info = '', simT = 0;
-    while (Date.now() - t0 < limit) {
-      if (caps.advance) {
-        await page.evaluate(() => {
-          const g = (typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || {}));
-          try { g.advance(0.05); } catch (e) {}
-        });
-      } else if (caps.renderAt) {
-        simT += 1 / 30;
-        await page.evaluate((t) => {
-          const g = (typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || {}));
-          try { window.__vclock = t; g.renderAt(t); } catch (e) {}
-        }, simT);
-      } else {
-        await page.waitForTimeout(400);
-      }
-      const st = await page.evaluate(() => {
-        const g = (typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || {}));
+      if (typeof startAe === 'function') { try { startAe.call(g); } catch (e) {} }
+      // autoSolve first (pin/arrow/zuma); startAuto for zipper / ring-untangle. autoSolve on arrow starts if idle.
+      try {
+        if (typeof g.autoSolve === 'function') g.autoSolve();
+        else if (typeof g.startAuto === 'function') g.startAuto();
+      } catch (e) {}
+
+      const verdict = () => {
         const G = g.G || g.st || g.game || {};
         const F = g.F || {};
         const ended = typeof g.ended === 'function' ? !!g.ended() : false;
-        const panel = G.panel || G.phase || F.phase || '';
-        const st = G.state || G.over || F.state || '';
-        const flags = [
-          window.__finished, window.__win, G.win === true, G.cleared === true,
-          panel === 'win' || panel === 'end',
-          st === 'win' || st === 'end' || st === 'cleared',
-          F.phase === 'win',
-          (g.winsInRun || F.winsInRun || 0) > 0,
-          ended && st !== 'fail' && panel !== 'fail',
-        ];
-        const fail = !!(window.__failed || st === 'fail' || panel === 'fail' || G.over === 'fail' || F.phase === 'fail');
-        return { finished: !!window.__finished, failed: fail, panel: String(panel||st), ended, any: flags.some(Boolean), btn: document.getElementById('btnAuto')?.textContent || '', cleared: !!G.cleared, phase: F.phase || '' };
-      });
-      info = JSON.stringify(st);
-      if (st.failed && !st.finished && st.panel === 'fail') { win = false; info = 'ended as fail ' + info; break; }
-      if (st.any && st.panel !== 'fail') { win = true; break; }
-      if (!caps.advance && !caps.renderAt) { /* already waited */ }
-      else await page.waitForTimeout(0);
-    }
-    rec('auto-solve-wins', win, info + ` ${((Date.now()-t0)/1000).toFixed(1)}s`);
+        const phase = String(F.phase || G.phase || G.panel || G.state || G.over || '');
+        if (window.__failed || phase === 'fail' || G.over === 'fail') return 'fail';
+        if (window.__finished || window.__win || G.win === true || G.cleared === true) return 'win';
+        if (phase === 'win' || phase === 'end' || phase === 'cleared' || phase === 'curtain') return 'win';
+        if ((g.winsInRun || F.winsInRun || 0) > 0) return 'win';
+        if (ended && phase !== 'fail' && G.state !== 'fail') return 'win';
+        if (G.state && G.state !== 'play' && G.state !== 'fail' && G.state !== 'idle' && G.state !== 'ready') return 'win';
+        return '';
+      };
+
+      const t0 = Date.now();
+      let how = 'realtime';
+      if (hasAdvance) {
+        how = 'advance';
+        for (let i = 0; i < 800 && !verdict(); i++) {
+          g.advance(0.1);
+          if (Date.now() - t0 > limit) break;
+        }
+      } else if (typeof g.renderAt === 'function') {
+        how = 'renderAt';
+        window.__nodraw = true;
+        if (window.__T == null) window.__T = 2e6;
+        const step = 1000 / 30;
+        for (let i = 0; i < 30 * 180 && !verdict(); i++) {
+          window.__T += step;
+          window.__vclock = window.__T / 1000;
+          g.renderAt(window.__T);
+          if (i % 4 === 3) await new Promise(r => requestAnimationFrame(r));
+          if (Date.now() - t0 > limit) break;
+        }
+      } else {
+        how = 'realtime';
+        while (Date.now() - t0 < limit && !verdict()) {
+          await new Promise(r => setTimeout(r, 300));
+        }
+      }
+      const G = g.G || {}, F = g.F || {};
+      const result = verdict() || 'timeout';
+      if (g.stopAuto) try { g.stopAuto(); } catch (e) {}
+      return {
+        result, how, sec: +((Date.now() - t0) / 1000).toFixed(1),
+        finished: !!window.__finished, phase: F.phase || G.phase || G.panel || G.state || '',
+        cleared: !!G.cleared, winsInRun: F.winsInRun || g.winsInRun || 0,
+        btn: document.getElementById('btnAuto')?.textContent || '',
+      };
+    }, limit);
+    rec('auto-solve-wins', st.result === 'win', JSON.stringify(st) + ' ' + st.sec + 's');
     await page.evaluate(() => {
-      const g = (typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || {}));
+      const g = window.__game || window.__app || {};
       if (g.stopAuto) try { g.stopAuto(); } catch (e) {}
       const stopAe = g.aeStop || window.__aeStop;
-      if (typeof stopAe === 'function') { try { stopAe(); } catch (e) {} }
+      if (typeof stopAe === 'function') { try { stopAe.call(g); } catch (e) {} }
     });
   } catch (e) { rec('auto-solve-wins', false, e.message); }
 
@@ -472,15 +481,28 @@ try {
             execSync(`python3 ${JSON.stringify(inspectPy)} ${JSON.stringify(pth)} extract-glb ${JSON.stringify(outDir)}`)
             const validatorUrl = new URL('gltf-validator/module.mjs', 'file:///workspace/block-tower-tool/node_modules/');
             const { validateBytes } = await import('/workspace/block-tower-tool/node_modules/gltf-validator/module.mjs');
-            const report = await validateBytes(new Uint8Array(readFileSync(glbPath)));
+            const buf = readFileSync(glbPath);
+            const report = await validateBytes(new Uint8Array(buf));
             const ok = report?.issues?.numErrors === 0;
-            rec('3d-glb-valid', ok, `errors=${report?.issues?.numErrors} warnings=${report?.issues?.numWarnings}`);
-          } catch (e) { rec('3d-glb-valid', false, e.message); }
-        } else rec('3d-glb-valid', false, 'no scene.glb');
+            let anims = 0, tracks = 0;
+            try {
+              const info = execSync(`python3 -c 'import struct,json,sys
+d=open(sys.argv[1],"rb").read()
+n,typ=struct.unpack_from("<I4s",d,12)
+j=json.loads(d[20:20+n])
+a=j.get("animations") or []
+print(len(a), sum(len(x.get("channels") or []) for x in a))
+' ${JSON.stringify(glbPath)}`, { encoding: 'utf8' }).trim().split(/\s+/);
+              anims = +info[0] || 0; tracks = +info[1] || 0;
+            } catch (e2) {}
+            rec('3d-glb-valid', ok, `errors=${report?.issues?.numErrors} warnings=${report?.issues?.numWarnings} animations=${anims} tracks=${tracks}`);
+            rec('3d-glb-has-animation', anims > 0 && tracks > 0, `animations=${anims} tracks=${tracks}`);
+          } catch (e) { rec('3d-glb-valid', false, e.message); rec('3d-glb-has-animation', false, e.message); }
+        } else { rec('3d-glb-valid', false, 'no scene.glb'); rec('3d-glb-has-animation', false, 'no scene.glb'); }
       }
-    } catch (e) { rec('3d-export-zip', false, e.message); rec('3d-glb-valid', false, 'no zip'); }
+    } catch (e) { rec('3d-export-zip', false, e.message); rec('3d-glb-valid', false, 'no zip'); rec('3d-glb-has-animation', false, 'no zip'); }
   } else {
-    rec('3d-export-zip', true, 'n/a'); rec('3d-glb-valid', true, 'n/a');
+    rec('3d-export-zip', true, 'n/a'); rec('3d-glb-valid', true, 'n/a'); rec('3d-glb-has-animation', true, 'n/a');
   }
 
   if (expectH5) {
