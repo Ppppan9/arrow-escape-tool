@@ -377,6 +377,15 @@ try {
 
       const t0 = Date.now();
       let how = 'realtime';
+      let aeCapped = false;
+      const capAe = (gameSec) => {
+        if (aeCapped) return;
+        const sec = gameSec != null ? gameSec : (Date.now() - t0) / 1000;
+        if (sec < 12) return;
+        aeCapped = true;
+        const fn = g.aeStop || (window.__app && window.__app.aeStop) || window.__aeStop;
+        if (typeof fn === 'function') { try { fn.call(g); } catch (e) {} }
+      };
       const hasAdvance = typeof g.advance === 'function';
       const isZuma = !!(g.Z && typeof g.Z.plan === 'function');
       const isRingBelt = typeof window.__step === 'function' && typeof window.__auto === 'function';
@@ -396,6 +405,7 @@ try {
         how = 'advance';
         for (let i = 0; i < 800 && !verdict(); i++) {
           g.advance(0.1);
+          capAe((i + 1) * 0.1);
           if (Date.now() - t0 > limit) break;
         }
       } else if (isZuma) {
@@ -418,6 +428,7 @@ try {
           }
           cd--; t += 33.3;
           try { g.renderAt(t); } catch (e) {}
+          capAe((i + 1) * 33.3 / 1000);
           if (i % 8 === 7) await yieldTick();
           if (Date.now() - t0 > limit) break;
         }
@@ -428,6 +439,7 @@ try {
         how = 'step';
         for (let i = 0; i < 400 && !verdict(); i++) {
           try { window.__step(50); } catch (e) {}
+          capAe(i + 1);
           if (i % 2 === 1) await yieldTick();
           if (Date.now() - t0 > limit) break;
         }
@@ -446,11 +458,14 @@ try {
         try { if (typeof g.autoSolve === 'function') g.autoSolve(); } catch (e) {}
         how = 'realtime';
         while (Date.now() - t0 < limit && !verdict()) {
+          capAe();
           await new Promise(r => setTimeout(r, 150));
         }
       } else {
-        applyKnobs(/block-shooter|voxel-shoot/i.test(id)
-          ? { autoSpeed: 4, autoStartDelay: 0, render3d: false }
+        applyKnobs(/block-shooter/i.test(id)
+          ? { level: 'random', seed: 3, randW: 15, randH: 8, randD: 6, randColors: 3, autoSpeed: 4, autoStartDelay: 0, render3d: false }
+          : /voxel-shoot/i.test(id)
+          ? { level: 'icecream', startSlots: 3, autoSpeed: 7, autoStartDelay: 0, fireRate: 22, render3d: false }
           : {});
         try { window.__no3d = true; } catch (e) {}
         if (typeof g.renderAt === 'function') {
@@ -473,12 +488,14 @@ try {
           for (let i = 0; i < maxF && !verdict(); i++) {
             window.__T += step;
             try { g.renderAt(window.__T); } catch (e) {}
+            capAe((i + 1) * step / 1000);
             if (i % 2 === 1) await yieldTick();
             if (Date.now() - t0 > limit) break;
           }
         } else {
           how = 'realtime';
           while (Date.now() - t0 < limit && !verdict()) {
+            capAe();
             await new Promise(r => setTimeout(r, 200));
           }
         }
