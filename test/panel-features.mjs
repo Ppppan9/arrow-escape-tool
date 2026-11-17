@@ -76,9 +76,9 @@ try {
       return Object.assign({ S }, a, tool, g, {
         aeStart: g.aeStart || a.aeStart || window.__aeStart,
         aeStop: g.aeStop || a.aeStop || window.__aeStop,
-        doExportAE: g.doExportAE || a.doExportAE || window.__aeExport,
-        doExport3D: g.doExport3D || a.doExport3D || window.__export3d,
-        doExportH5: g.doExportH5 || a.doExportH5 || window.__exportH5,
+        doExportAE: g.doExportAE || a.doExportAE || g.aeExport || a.aeExport || window.__aeExport,
+        doExport3D: g.doExport3D || a.doExport3D || g.export3DZip || a.export3DZip || window.__export3d,
+        doExportH5: g.doExportH5 || a.doExportH5 || g.exportH5Zip || a.exportH5Zip || window.__exportH5,
       });
     };
   });
@@ -153,10 +153,10 @@ try {
   await page.fill('#panelSearch', '');
   await page.waitForTimeout(100);
 
-  // screenshot download
+  // screenshot download (filter by extension so a leftover zip/json cannot steal the event)
   try {
     const [dl] = await Promise.all([
-      page.waitForEvent('download', { timeout: 8000 }),
+      page.waitForEvent('download', { timeout: 15000, predicate: d => /\.(png|jpe?g|webp)$/i.test(d.suggestedFilename() || '') }),
       page.click('#btnShot'),
     ]);
     rec('screenshot-download', !!dl.suggestedFilename(), dl.suggestedFilename());
@@ -167,7 +167,7 @@ try {
   // export settings
   try {
     const [dl] = await Promise.all([
-      page.waitForEvent('download', { timeout: 8000 }),
+      page.waitForEvent('download', { timeout: 15000, predicate: d => /\.json$/i.test(d.suggestedFilename() || '') }),
       page.click('#btnExport'),
     ]);
     const name = dl.suggestedFilename();
@@ -237,37 +237,40 @@ try {
     }
   });
   const recBtnText = await page.$eval('#btnRec', el => el.textContent);
-  await page.click('#btnRec');
-  await page.waitForTimeout(900);
-  const recOn = await page.evaluate(() => {
+  // startRec is async (zipper WebCodecs init); await the API when present, then confirm UI.
+  await page.evaluate(async () => {
+    const g = (typeof window.__api === "function" ? window.__api() : (window.__game || window.__app || {}));
+    const start = g.startRec || window.__startRec;
+    if (typeof start === 'function') { try { await start.call(g); return; } catch (e) {} }
+    document.getElementById('btnRec')?.click();
+  });
+  const recOn = await page.waitForFunction(() => {
     const b = document.getElementById('btnRec');
     return !!(b?.classList.contains('on') || /停止/.test(b?.textContent || ''));
-  });
+  }, { timeout: 20000 }).then(() => true).catch(() => false);
   rec('record-starts', recOn, 'btn was ' + recBtnText);
   if (recOn) {
-    const names = [];
-    page.on('download', d => names.push(d.suggestedFilename() || ''));
-    await page.click('#btnRec');
-    await page.waitForTimeout(1500);
-    let videoName = names.find(n => /\.(mp4|webm)$/i.test(n));
-    if (!videoName) {
+    let videoName = '';
+    try {
+      const [dl] = await Promise.all([
+        page.waitForEvent('download', { timeout: 45000, predicate: d => /\.(mp4|webm)$/i.test(d.suggestedFilename() || '') }),
+        page.evaluate(async () => {
+          const g = (typeof window.__api === "function" ? window.__api() : (window.__game || window.__app || {}));
+          const stop = g.stopRec || window.__stopRec;
+          if (typeof stop === 'function') { await stop.call(g); return; }
+          document.getElementById('btnRec')?.click();
+        }),
+      ]);
+      videoName = dl.suggestedFilename() || '';
+    } catch (e) {
       const hrefName = await page.evaluate(() => {
         const a = document.querySelector('#recList a[download], #recList a[href]');
         return a ? (a.getAttribute('download') || a.textContent || '') : '';
       });
-      if (/\.(mp4|webm)/i.test(hrefName)) {
-        try {
-          const [dl] = await Promise.all([
-            page.waitForEvent('download', { timeout: 8000 }),
-            page.click('#recList a[download], #recList a[href]'),
-          ]);
-          videoName = dl.suggestedFilename() || hrefName;
-        } catch (e) {
-          videoName = hrefName.trim();
-        }
-      }
+      videoName = /\.(mp4|webm)/i.test(hrefName) ? hrefName.trim() : '';
+      if (!videoName) videoName = '';
     }
-    rec('record-download', !!videoName, videoName || ('no video; got ' + names.join(',')));
+    rec('record-download', !!videoName, videoName || 'no video download after async stopRec');
   } else {
     rec('record-download', false, 'did not start');
   }
@@ -290,7 +293,7 @@ try {
     if (!before) rec('settings-import-restore', false, 'no range');
     else {
       const [dl] = await Promise.all([
-        page.waitForEvent('download', { timeout: 8000 }),
+        page.waitForEvent('download', { timeout: 15000, predicate: d => /\.json$/i.test(d.suggestedFilename() || '') }),
         page.click('#btnExport'),
       ]);
       const savedPath = await dl.path();
@@ -317,62 +320,53 @@ try {
     }
   } catch (e) { rec('settings-import-restore', false, e.message); }
 
-  // ---- auto-solve runs to a win (official in-page pump; do not IPC every frame) ----
-  page.setDefaultTimeout(180000);
+  // ---- auto-solve runs to a win (official in-page pump per tool; do not IPC every frame) ----
+  page.setDefaultTimeout(420000);
   try {
-    const limit = +(process.env.AUTO_WIN_MS || 180000);
+    const limit = +(process.env.AUTO_WIN_MS || 400000);
     const st = await page.evaluate(async (limit) => {
       // Live object, not a shallow copy — getters like F/G must stay live.
       const g = window.__game || window.__app || window.__tool || {};
       const S = (typeof window.__S === 'function' ? window.__S() : null) || g.S || window.S || {};
+      const id = String(g.APP_ID || g.TOOL_ID || (window.__app && window.__app.TOOL_ID) || S.app || '');
       const speed = {
         autoMode: 'video', handShow: false,
         animScale: 0.15, flyMs: 40, flyDuration: 40, handSpeed: 8, autoSpeed: 6, timerSec: 120,
         moveMs: 40, animMs: 40, stepMs: 30, autoDelay: 10, fingerMs: 40,
-        autoWait: 10, recAuto: false, aeWithRec: false, endCard: false,
+        autoWait: 10, recAuto: false, aeWithRec: false, autoRec: false, endCard: false,
         cupInterval: 40, cupFly: 40, boxGrow: 40, boxClose: 40, boxFlyDur: 40, slideSpeed: 8,
-        introSec: 0, chainSpeed: 2.5,
+        introSec: 0, chainSpeed: 2.5, autoStartDelay: 0,
       };
-      const hasAdvance = typeof g.advance === 'function';
-      if (hasAdvance) {
-        // zipper official: only the knobs that path uses; each set() rebuilds the panel
-        try { g.set('autoMode', 'video'); } catch (e) {}
-        try { g.set('handShow', false); } catch (e) {}
-        try { g.set('aeWithRec', false); } catch (e) {}
-        try { g.set('recAuto', false); } catch (e) {}
-        try { g.set('autoRec', false); } catch (e) {}
-        if (typeof g.newGame === 'function') { try { g.newGame(0); } catch (e) { try { g.newGame(); } catch (e2) {} } }
-        try { g.advance(0.7, false); } catch (e) {}
-        const startAe = g.aeStart || window.__aeStart;
-        if (typeof startAe === 'function') { try { startAe.call(g); } catch (e) {} }
-        try { g.startAuto(); } catch (e) {}
-      } else {
+      const applyKnobs = (extra) => {
+        const knobs = Object.assign({}, speed, extra || {});
+        if (typeof window.__setSettings === 'function') {
+          try { window.__setSettings(knobs); return; } catch (e) {}
+        }
+        if (typeof g.setMany === 'function') { try { g.setMany(knobs); return; } catch (e) {} }
         if (typeof g.set === 'function') {
-          for (const [k, v] of Object.entries(speed)) { try { g.set(k, v); } catch (e) {} }
-        } else if (typeof g.setMany === 'function') {
-          try { g.setMany(speed); } catch (e) {}
-        } else {
-          for (const [k, v] of Object.entries(speed)) if (S && k in S) S[k] = v;
+          for (const [k, v] of Object.entries(knobs)) { try { g.set(k, v); } catch (e) {} }
+          return;
         }
-        if (typeof g.renderAt === 'function') {
-          try { window.__T = window.__T || 2e6; g.renderAt(window.__T); } catch (e) {}
+        if (typeof g.setSetting === 'function') {
+          for (const [k, v] of Object.entries(knobs)) { try { g.setSetting(k, v); } catch (e) {} }
+          return;
         }
-        if (typeof g.newGame === 'function') { try { g.newGame(); } catch (e) { try { g.newGame(true); } catch (e2) {} } }
-        const startAe = g.aeStart || window.__aeStart;
-        if (typeof startAe === 'function') { try { startAe.call(g); } catch (e) {} }
-        try {
-          if (typeof g.autoSolve === 'function') g.autoSolve();
-          else if (typeof g.startAuto === 'function') g.startAuto();
-        } catch (e) {}
-      }
+        for (const [k, v] of Object.entries(knobs)) if (S && k in S) S[k] = v;
+      };
+      const startAe = () => {
+        const fn = g.aeStart || (window.__app && window.__app.aeStart) || window.__aeStart;
+        if (typeof fn === 'function') { try { fn.call(g); } catch (e) {} }
+      };
+      const yieldTick = () => new Promise(r => setTimeout(r, 0));
 
       const verdict = () => {
         const G = g.G || g.st || g.game || {};
         const F = g.F || {};
-        const ended = typeof g.ended === 'function' ? !!g.ended() : false;
+        const ended = typeof g.ended === 'function' ? !!g.ended() : (typeof g.isEnded === 'function' ? !!g.isEnded() : false);
         const phase = String(F.phase || G.phase || G.panel || G.state || G.over || '');
         if (window.__failed || phase === 'fail' || G.over === 'fail') return 'fail';
         if (window.__finished || window.__win || G.win === true || G.cleared === true) return 'win';
+        if (G.winT != null && G.winT !== false) return 'win';
         if (phase === 'win' || phase === 'end' || phase === 'cleared' || phase === 'curtain') return 'win';
         if ((g.winsInRun || F.winsInRun || 0) > 0) return 'win';
         if (ended && phase !== 'fail' && G.state !== 'fail') return 'win';
@@ -382,45 +376,130 @@ try {
 
       const t0 = Date.now();
       let how = 'realtime';
+      const hasAdvance = typeof g.advance === 'function';
+      const isZuma = !!(g.Z && typeof g.Z.plan === 'function');
+      const isRingBelt = typeof window.__step === 'function' && typeof window.__auto === 'function';
+      const isCoffee = /coffee/i.test(id);
+
       if (hasAdvance) {
+        // zipper official: only the knobs that path uses; each set() rebuilds the panel
+        try { g.set('autoMode', 'video'); } catch (e) {}
+        try { g.set('handShow', false); } catch (e) {}
+        try { g.set('aeWithRec', false); } catch (e) {}
+        try { g.set('recAuto', false); } catch (e) {}
+        try { g.set('autoRec', false); } catch (e) {}
+        if (typeof g.newGame === 'function') { try { g.newGame(0); } catch (e) { try { g.newGame(); } catch (e2) {} } }
+        try { g.advance(0.7, false); } catch (e) {}
+        startAe();
+        try { g.startAuto(); } catch (e) {}
         how = 'advance';
         for (let i = 0; i < 800 && !verdict(); i++) {
           g.advance(0.1);
           if (Date.now() - t0 > limit) break;
         }
-      } else if (typeof g.renderAt === 'function') {
-        how = 'renderAt';
+      } else if (isZuma) {
+        applyKnobs({ seed: 1, introSec: 0, chainSpeed: 2.5, autoSpeed: 6 });
         window.__nodraw = true;
-        if (window.__T == null) window.__T = 2e6;
-        const step = 1000 / 30;
+        let t = 500000;
+        try { g.renderAt(t); } catch (e) {}
+        if (typeof g.newGame === 'function') { try { g.newGame(); } catch (e) {} }
+        startAe();
+        how = 'planShoot';
+        let cd = 0;
         for (let i = 0; i < 30 * 180 && !verdict(); i++) {
-          window.__T += step;
-          window.__vclock = window.__T / 1000;
-          g.renderAt(window.__T);
-          if (i % 4 === 3) await new Promise(r => requestAnimationFrame(r));
+          const Z = g.Z;
+          if (cd <= 0 && Z && typeof Z.canShoot === 'function' && Z.canShoot()) {
+            const q = Z.plan();
+            if (q) { try { if (Z.aim) Z.aim(q.x, q.y); Z.shoot(q.x, q.y); } catch (e) {} }
+            cd = 18;
+          }
+          cd--; t += 33.3;
+          try { g.renderAt(t); } catch (e) {}
+          if (i % 8 === 7) await yieldTick();
           if (Date.now() - t0 > limit) break;
         }
-      } else {
+      } else if (isRingBelt) {
+        applyKnobs({ loopLevels: false, autoSpeed: 3, recAuto: false, aeWithRec: false, autoRec: false });
+        startAe();
+        try { window.__auto(true); } catch (e) {}
+        how = 'step';
+        for (let i = 0; i < 400 && !verdict(); i++) {
+          try { window.__step(50); } catch (e) {}
+          if (i % 2 === 1) await yieldTick();
+          if (Date.now() - t0 > limit) break;
+        }
+      } else if (isCoffee) {
+        // official: wall-clock autoSolve + __finished, up to 400s. Do not freeze the rAF loop with __vclock.
+        const f = 2.5;
+        applyKnobs({
+          autoSpeed: f,
+          cupInterval: Math.round(200 / f), cupFly: Math.round(150 / f),
+          boxGrow: Math.round(300 / f), boxClose: Math.round(450 / f),
+          boxFlyDur: Math.round(400 / f), slideSpeed: 6 * f,
+          autoRec: false, aeWithRec: false, render3d: false,
+        });
+        if (typeof g.newGame === 'function') { try { g.newGame(); } catch (e) {} }
+        startAe();
+        try { if (typeof g.autoSolve === 'function') g.autoSolve(); } catch (e) {}
         how = 'realtime';
         while (Date.now() - t0 < limit && !verdict()) {
-          await new Promise(r => setTimeout(r, 300));
+          await new Promise(r => setTimeout(r, 150));
+        }
+      } else {
+        applyKnobs(/block-shooter|voxel-shoot/i.test(id)
+          ? { autoSpeed: 4, autoStartDelay: 0, render3d: false }
+          : {});
+        try { window.__no3d = true; } catch (e) {}
+        if (typeof g.renderAt === 'function') {
+          window.__T = window.__T || 1e5;
+          try { g.renderAt(window.__T); } catch (e) {}
+        }
+        if (typeof g.newGame === 'function') { try { g.newGame(); } catch (e) { try { g.newGame(true); } catch (e2) {} } }
+        startAe();
+        // prefer startAuto (ring-untangle autoSolve is a toggle and would stop a running run)
+        try {
+          if (typeof g.startAuto === 'function') g.startAuto();
+          else if (typeof g.autoSolve === 'function') g.autoSolve();
+          else if (typeof g.autoPlay === 'function') g.autoPlay();
+        } catch (e) {}
+        if (typeof g.renderAt === 'function') {
+          how = 'renderAt';
+          if (window.__T == null) window.__T = 1e5;
+          const step = 1000 / 30;
+          const maxF = /block-shooter|voxel-shoot/i.test(id) ? 30 * 400 : 30 * 180;
+          for (let i = 0; i < maxF && !verdict(); i++) {
+            window.__T += step;
+            try { g.renderAt(window.__T); } catch (e) {}
+            if (i % 2 === 1) await yieldTick();
+            if (Date.now() - t0 > limit) break;
+          }
+        } else {
+          how = 'realtime';
+          while (Date.now() - t0 < limit && !verdict()) {
+            await new Promise(r => setTimeout(r, 200));
+          }
         }
       }
+
       const G = g.G || {}, F = g.F || {};
       const result = verdict() || 'timeout';
       if (g.stopAuto) try { g.stopAuto(); } catch (e) {}
+      if (typeof window.__auto === 'function') try { window.__auto(false); } catch (e) {}
       return {
         result, how, sec: +((Date.now() - t0) / 1000).toFixed(1),
         finished: !!window.__finished, phase: F.phase || G.phase || G.panel || G.state || '',
         cleared: !!G.cleared, winsInRun: F.winsInRun || g.winsInRun || 0,
+        winT: G.winT, ended: typeof g.isEnded === 'function' ? !!g.isEnded() : false,
         btn: document.getElementById('btnAuto')?.textContent || '',
+        id,
       };
     }, limit);
     rec('auto-solve-wins', st.result === 'win', JSON.stringify(st) + ' ' + st.sec + 's');
     await page.evaluate(() => {
       const g = window.__game || window.__app || {};
       if (g.stopAuto) try { g.stopAuto(); } catch (e) {}
-      const stopAe = g.aeStop || window.__aeStop;
+      if (typeof window.__auto === 'function') try { window.__auto(false); } catch (e) {}
+      const stopAe = g.aeStop || (window.__app && window.__app.aeStop) || window.__aeStop;
       if (typeof stopAe === 'function') { try { stopAe.call(g); } catch (e) {} }
     });
   } catch (e) { rec('auto-solve-wins', false, e.message); }
