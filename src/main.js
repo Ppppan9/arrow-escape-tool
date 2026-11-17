@@ -369,7 +369,7 @@ async function doExport3D(save = true, r0 = curRec()) {
   if (!r0) { toast('请先用“● 开始记录”记录一段（自动通关或手动游玩）'); return null; }
   status('正在生成 3D 动画…');
   const ae = await aeRec.exportZip(r0, { aeFps: String(+S.export3dFps || 30), aeSize: 'canvas', aeSampling: 'bake', aeNames: 'en', aeAudio: 'both' });
-  const r = await export3D({ S: { ...((r0 && r0.S) || S), export3dFps: S.export3dFps }, ae, toolId: APP_ID });
+  const r = await export3D({ S: { ...((r0 && r0.S) || S), export3dFps: S.export3dFps, export3dLite: S.export3dLite }, ae, toolId: APP_ID });
   window.__e3dLast = r; if (save) download(r.blob, r.name); status(`3D 动画：${r.stats.nodes} 节点，${r.duration.toFixed(2)}s`); return r;
 }
 async function doExportH5() { try { return await exportH5PlayableFromPage({ toolId: APP_ID, S, stripDataUrls: [DEFAULT_HAND], status, toast }); } catch (e) { status('H5 导出失败：' + e.message); console.error(e); return null; } }

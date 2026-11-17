@@ -2,6 +2,7 @@
 // Used by tools whose scene is authored as AE layers (arrow-escape, pin-rescue, and similar).
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+import { ueOptimizeExport } from './ue-optimize.js';
 import { makeZip } from '../ae/zip.js';
 import PY_TEXT from './blender_import.py';
 import README_TEXT from './README_3D.md';
@@ -204,7 +205,9 @@ export async function export3D({ S, ae, toolId = 'tool' }) {
   const glb0 = await new Promise((res, rej) => {
     new GLTFExporter().parse(scene, out => res(out), rej, expOpts);
   });
-  const glb = glbStripEmptyAnimations(glb0);
+  const glb1 = glbStripEmptyAnimations(glb0);
+  const UEO = ueOptimizeExport(glb1, S, { fps, opacity: null }); // 引擎精简导出（控制台可关）
+  const glb = UEO.glb;
   const stamp = (ae.name && (ae.name.match(/(\d{8}_\d{6})/) || [])[1]) || (() => { const d = new Date(), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; })();
   const audio = (ae.fileList || []).filter(f => f.name.startsWith('audio/'));
   const scene3d = {
@@ -212,6 +215,7 @@ export async function export3D({ S, ae, toolId = 'tool' }) {
     units: { px: PX, note: 'root scale 0.01, rot X -90deg' },
     camera: { name: cam.name, type: 'orthographic', orthoScale: r5(Math.max(W, H) * PX), widthM: r5(W * PX), heightM: r5(H * PX) },
     stats: { nodes: nodes.length, tracks: tracks.length, ...used },
+    optimize: UEO.stats,
     nodes, audio: audio.map(a => ({ file: a.file || a.name, t: 0, name: a.name })),
   };
   const enc = new TextEncoder();
