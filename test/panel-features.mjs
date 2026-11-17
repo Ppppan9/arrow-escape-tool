@@ -331,7 +331,7 @@ try {
         moveMs: 40, animMs: 40, stepMs: 30, autoDelay: 10, fingerMs: 40,
         autoWait: 10, recAuto: false, aeWithRec: false, endCard: false,
         cupInterval: 40, cupFly: 40, boxGrow: 40, boxClose: 40, boxFlyDur: 40, slideSpeed: 8,
-        introSec: 0.05, chainSpeed: 8,
+        introSec: 0, chainSpeed: 2.5,
       };
       const hasAdvance = typeof g.advance === 'function';
       if (hasAdvance) {
