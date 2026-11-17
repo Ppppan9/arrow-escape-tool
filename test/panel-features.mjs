@@ -10,7 +10,7 @@ if (!process.env.HAS_AE) process.env.HAS_AE = '1';
  */
 import { chromium } from 'playwright-core';
 import { createServer } from 'http';
-import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync } from 'fs';
 import { execSync } from 'child_process';
 import { extname, join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -307,7 +307,7 @@ try {
     if (autoBtn) await autoBtn.click();
     else await page.evaluate(() => { const g = window.__app || window.__game || {}; if (g.autoSolve) g.autoSolve(); else if (g.startAuto) g.startAuto(); });
     const t0 = Date.now();
-    const limit = +(process.env.AUTO_WIN_MS || 90000);
+    const limit = +(process.env.AUTO_WIN_MS || 180000);
     let win = false, info = '';
     while (Date.now() - t0 < limit) {
       const st = await page.evaluate(() => {
@@ -358,23 +358,24 @@ try {
   };
 
   async function exportViaApi(which) {
-    return page.evaluate(async (which) => {
-      const g = window.__app || window.__game || {};
-      const fn = which === 'ae'
-        ? (g.doExportAE || g.aeExport || window.__aeExport)
-        : which === '3d'
-          ? (g.doExport3D || g.export3DZip || window.__export3d)
-          : (g.doExportH5 || g.exportH5Zip || window.__exportH5);
-      if (typeof fn !== 'function') return { err: 'no ' + which + ' api' };
-      const out = await fn.call(g, true);
-      const first = Array.isArray(out) ? out[0] : out;
-      const blob = first && (first.blob || (first instanceof Blob ? first : null));
-      const name = first && first.name;
-      if (!blob) return { err: 'no blob', name };
-      const buf = new Uint8Array(await blob.arrayBuffer());
-      let s = ''; const step = 32768; for (let i = 0; i < buf.length; i += step) s += String.fromCharCode.apply(null, buf.subarray(i, i + step));
-      return { name, b64: btoa(s), size: buf.length };
-    }, which);
+    // Use the real download, not a base64 round-trip through evaluate (large 3D/H5 zips crash the tab).
+    const [dl] = await Promise.all([
+      page.waitForEvent('download', { timeout: 180000 }),
+      page.evaluate(async (which) => {
+        const g = window.__app || window.__game || {};
+        const fn = which === 'ae'
+          ? (g.doExportAE || g.aeExport || window.__aeExport)
+          : which === '3d'
+            ? (g.doExport3D || g.export3DZip || window.__export3d)
+            : (g.doExportH5 || g.exportH5Zip || window.__exportH5);
+        if (typeof fn !== 'function') throw new Error('no ' + which + ' api');
+        return await fn.call(g, true);
+      }, which),
+    ]);
+    const name = dl.suggestedFilename();
+    const pth = outDir + '/' + name.replace(/[^\w.-]+/g, '_');
+    await dl.saveAs(pth);
+    return { name, pth, size: statSync(pth).size };
   }
 
   if (expectAe) {
@@ -382,7 +383,7 @@ try {
       const r = await exportViaApi('ae');
       if (r.err) rec('ae-export-zip', false, r.err);
       else {
-        const pth = dumpB64(r.name, r.b64);
+        const pth = r.pth;
         const names = inspectZip(pth);
         const hasJsx = /build_ae_project\.jsx|\.jsx/.test(names);
         const fnOk = nameOk('ae', r.name);
@@ -396,7 +397,7 @@ try {
       const r = await exportViaApi('3d');
       if (r.err) rec('3d-export-zip', false, r.err);
       else {
-        const pth = dumpB64(r.name, r.b64);
+        const pth = r.pth;
         const names = inspectZip(pth);
         const hasGlb = /scene\.glb/i.test(names) || names.includes('scene.glb') || /\.glb/i.test(names);
         const fnOk = nameOk('3d', r.name);
@@ -423,7 +424,7 @@ try {
       const r = await exportViaApi('h5');
       if (r.err) rec('h5-export-zip', false, r.err);
       else {
-        const pth = dumpB64(r.name, r.b64);
+        const pth = r.pth;
         const names = inspectZip(pth);
         const htmls = names.split(/\r?\n/).filter(n => n.trim().toLowerCase().endsWith('index.html'));
         const fnOk = nameOk('h5', r.name);
