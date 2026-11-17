@@ -39,6 +39,36 @@ function solidTex(rgb, w = 8, h = 8) {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.needsUpdate = true; return t;
 }
 
+
+function glbStripEmptyAnimations(buf) {
+  const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  if (u8.length < 20) return u8;
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  if (dv.getUint32(0, true) !== 0x46546C67) return u8;
+  const jsonLen = dv.getUint32(12, true);
+  const jsonType = dv.getUint32(16, true);
+  if (jsonType !== 0x4E4F534A) return u8;
+  const jsonStart = 20, jsonBytes = u8.subarray(jsonStart, jsonStart + jsonLen);
+  let obj; try { obj = JSON.parse(new TextDecoder().decode(jsonBytes)); } catch (e) { return u8; }
+  if (!obj.animations || obj.animations.length) return u8;
+  delete obj.animations;
+  const json = new TextEncoder().encode(JSON.stringify(obj));
+  const pad = (4 - (json.length % 4)) % 4;
+  const jsonChunkLen = json.length + pad;
+  const rest = u8.subarray(jsonStart + jsonLen);
+  const out = new Uint8Array(12 + 8 + jsonChunkLen + rest.length);
+  const w = new DataView(out.buffer);
+  w.setUint32(0, 0x46546C67, true);
+  w.setUint32(4, 2, true);
+  w.setUint32(8, out.length, true);
+  w.setUint32(12, jsonChunkLen, true);
+  w.setUint32(16, 0x4E4F534A, true);
+  out.set(json, 20);
+  for (let i = 0; i < pad; i++) out[20 + json.length + i] = 0x20;
+  out.set(rest, 20 + jsonChunkLen);
+  return out;
+}
+
 export async function export3D({ S, ae, toolId = 'tool' }) {
   if (!ae || !ae.timeline) throw new Error('没有可用的 AE 记录（请先「开始记录」再通关或游玩）');
   const tl = ae.timeline, meta = tl.meta || {}, fps = +S.export3dFps || +meta.fps || 30;
@@ -169,10 +199,12 @@ export async function export3D({ S, ae, toolId = 'tool' }) {
   cam.name = 'camera_ortho'; cam.position.set(W / 2 * PX, 8, H / 2 * PX); cam.lookAt(W / 2 * PX, 0, H / 2 * PX);
 
   const scene = new THREE.Scene(); scene.name = 'scene'; scene.add(root); scene.add(cam);
-  const clip = new THREE.AnimationClip('ae_timeline', D, tracks);
-  const glb = await new Promise((res, rej) => {
-    new GLTFExporter().parse(scene, out => res(out), rej, { binary: true, animations: [clip] });
+  const expOpts = { binary: true };
+  if (tracks.length) expOpts.animations = [new THREE.AnimationClip('ae_timeline', D, tracks)];
+  const glb0 = await new Promise((res, rej) => {
+    new GLTFExporter().parse(scene, out => res(out), rej, expOpts);
   });
+  const glb = glbStripEmptyAnimations(glb0);
   const stamp = (ae.name && (ae.name.match(/(\d{8}_\d{6})/) || [])[1]) || (() => { const d = new Date(), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; })();
   const audio = (ae.fileList || []).filter(f => f.name.startsWith('audio/'));
   const scene3d = {

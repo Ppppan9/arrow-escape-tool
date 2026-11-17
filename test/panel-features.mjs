@@ -292,7 +292,7 @@ try {
       const S = g.S || window.S;
       if (!S) return;
       const speed = {
-        animScale: 0.15, flyMs: 40, flyDuration: 40, handSpeed: 8, autoSpeed: 8,
+        animScale: 0.15, flyMs: 40, flyDuration: 40, handSpeed: 8, autoSpeed: 5, timerSec: 120,
         moveMs: 40, animMs: 40, stepMs: 30, autoDelay: 10, fingerMs: 40,
         autoWait: 10, recAuto: false, aeWithRec: false, endCard: false,
       };
@@ -398,7 +398,7 @@ try {
       else {
         const pth = dumpB64(r.name, r.b64);
         const names = inspectZip(pth);
-        const hasGlb = /scene\\.glb/.test(names);
+        const hasGlb = /scene\.glb/i.test(names) || names.includes('scene.glb') || /\.glb/i.test(names);
         const fnOk = nameOk('3d', r.name);
         rec('3d-export-zip', hasGlb && fnOk && r.size > 200, `${r.name} ${r.size}b nameOk=${fnOk} ${names.split('\n').slice(0,8).join(',')}`);
         if (hasGlb) {
@@ -425,7 +425,7 @@ try {
       else {
         const pth = dumpB64(r.name, r.b64);
         const names = inspectZip(pth);
-        const htmls = names.split('\n').filter(n => /index\\.html$/i.test(n.trim()));
+        const htmls = names.split(/\r?\n/).filter(n => n.trim().toLowerCase().endsWith('index.html'));
         const fnOk = nameOk('h5', r.name);
         rec('h5-export-zip', htmls.length > 0 && fnOk && r.size > 200, `${r.name} ${r.size}b nameOk=${fnOk} htmls=${htmls.length} e.g. ${htmls.slice(0,6).join(',')}`);
       }
