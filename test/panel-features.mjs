@@ -340,6 +340,7 @@ try {
         try { g.set('handShow', false); } catch (e) {}
         try { g.set('aeWithRec', false); } catch (e) {}
         try { g.set('recAuto', false); } catch (e) {}
+        try { g.set('autoRec', false); } catch (e) {}
         if (typeof g.newGame === 'function') { try { g.newGame(0); } catch (e) { try { g.newGame(); } catch (e2) {} } }
         try { g.advance(0.7, false); } catch (e) {}
         const startAe = g.aeStart || window.__aeStart;
@@ -443,20 +444,30 @@ try {
   };
 
   async function exportViaApi(which) {
-    // Use the real download, not a base64 round-trip through evaluate (large 3D/H5 zips crash the tab).
-    const [dl] = await Promise.all([
-      page.waitForEvent('download', { timeout: 180000 }),
-      page.evaluate(async (which) => {
-        const g = (typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || {}));
-        const fn = which === 'ae'
-          ? (g.doExportAE || g.aeExport || window.__aeExport)
-          : which === '3d'
-            ? (g.doExport3D || g.export3DZip || window.__export3d)
-            : (g.doExportH5 || g.exportH5Zip || window.__exportH5);
-        if (typeof fn !== 'function') throw new Error('no ' + which + ' api');
-        return await fn.call(g);
-      }, which),
-    ]);
+    // Real download (not base64 through evaluate). Ignore leftover rec .mp4/.webm events.
+    const zipDl = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { page.off('download', onDl); reject(new Error('download timeout')); }, 180000);
+      const onDl = d => {
+        const n = d.suggestedFilename() || '';
+        if (!/\.zip$/i.test(n)) return;
+        clearTimeout(timer);
+        page.off('download', onDl);
+        resolve(d);
+      };
+      page.on('download', onDl);
+    });
+    const ev = page.evaluate(async (which) => {
+      const g = window.__game || window.__app || {};
+      try { if (g.stopRec) g.stopRec(); } catch (e) {}
+      const fn = which === 'ae'
+        ? (g.doExportAE || g.aeExport || window.__aeExport)
+        : which === '3d'
+          ? (g.doExport3D || g.export3DZip || window.__export3d)
+          : (g.doExportH5 || g.exportH5Zip || window.__exportH5);
+      if (typeof fn !== 'function') throw new Error('no ' + which + ' api');
+      return await fn.call(g);
+    }, which);
+    const [dl] = await Promise.all([zipDl, ev]);
     const name = dl.suggestedFilename();
     const pth = outDir + '/' + name.replace(/[^\w.-]+/g, '_');
     await dl.saveAs(pth);
