@@ -1,6 +1,6 @@
 // 箭头挪出核玩工具 —— 设置定义（中文标签），版本号 + 迁移。通用分组 / 键名按 game-toolkit-standard/TOOLKIT_STANDARD.md
 import { h5DeviceSelectOptions } from './h5/index.js';
-export const APP_VERSION = '1.0.1';
+export const APP_VERSION = '1.0.2';
 export const SETTINGS_VERSION = 2;
 export const STORE_KEY = 'arrowEscapeTool.settings';
 export const APP_ID = 'arrow-escape-tool';
