@@ -367,7 +367,7 @@ try {
         const phase = String(F.phase || G.phase || G.panel || G.state || G.over || '');
         if (window.__failed || phase === 'fail' || G.over === 'fail') return 'fail';
         if (window.__finished || window.__win || G.win === true || G.cleared === true) return 'win';
-        if (G.winT != null && G.winT !== false) return 'win';
+        if (typeof G.winT === 'number' && G.winT > 0) return 'win';
         if (phase === 'win' || phase === 'end' || phase === 'cleared' || phase === 'curtain') return 'win';
         if ((g.winsInRun || F.winsInRun || 0) > 0) return 'win';
         if (ended && phase !== 'fail' && G.state !== 'fail') return 'win';
