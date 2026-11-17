@@ -101,27 +101,27 @@ export async function export3D({ S, ae, toolId = 'tool' }) {
   let z = 0;
 
   function addTracks(name, mesh, samples) {
-    const P = [], Q = [], SC = [], OP = [];
+    const P = [], Q = [], SC = [];
     const qq = new THREE.Quaternion(), Z = new THREE.Vector3(0, 0, 1);
     let anyOp = false, anySc = false;
     for (const s of samples) {
       P.push(s.x, -s.y, s.z || 0);
       qq.setFromAxisAngle(Z, -(s.rot || 0) * Math.PI / 180);
       Q.push(qq.x, qq.y, qq.z, qq.w);
-      const sx = s.sx, sy = s.sy;
-      SC.push(sx, sy, 1);
-      OP.push(s.op);
-      if (Math.abs(sx - samples[0].sx) > 1e-6 || Math.abs(sy - samples[0].sy) > 1e-6) anySc = true;
+      if (Math.abs(s.sx - samples[0].sx) > 1e-6 || Math.abs(s.sy - samples[0].sy) > 1e-6) anySc = true;
       if (Math.abs(s.op - samples[0].op) > 1e-6) anyOp = true;
+    }
+    // Bake opacity into scale: r160 GLTFExporter drops the whole clip if any track
+    // uses an unsupported path such as material.opacity (PATH_PROPERTIES is TRS-only).
+    for (const s of samples) {
+      const k = anyOp ? s.op : 1;
+      SC.push(s.sx * k, s.sy * k, k);
     }
     tracks.push(new THREE.VectorKeyframeTrack(name + '.position', times, P));
     tracks.push(new THREE.QuaternionKeyframeTrack(name + '.quaternion', times, Q));
-    if (anySc) tracks.push(new THREE.VectorKeyframeTrack(name + '.scale', times, SC));
+    if (anySc || anyOp) tracks.push(new THREE.VectorKeyframeTrack(name + '.scale', times, SC));
     else mesh.scale.set(samples[0].sx, samples[0].sy, 1);
-    if (anyOp && mesh.material) {
-      mesh.material.transparent = true;
-      tracks.push(new THREE.NumberKeyframeTrack(name + '.material.opacity', times, OP));
-    } else if (mesh.material) mesh.material.opacity = samples[0].op;
+    if (mesh.material) { mesh.material.transparent = true; mesh.material.opacity = 1; }
     mesh.position.set(samples[0].x, -samples[0].y, samples[0].z || 0);
   }
 
@@ -148,7 +148,7 @@ export async function export3D({ S, ae, toolId = 'tool' }) {
   for (const l of layers) {
     if (l.src && l.src.nul) continue; // camera null — applied as group? skip, camera is ortho full-frame
     if (l.src && l.src.asset === 'mix') continue;
-    const name = String(l.name || l.id || 'layer').replace(/[^\w\u4e00-\u9fff.-]+/g, '_').slice(0, 60) || 'layer';
+    const name = String(l.name || l.id || 'layer').replace(/[^\w\u4e00-\u9fff]+/g, '_').slice(0, 60) || 'layer';
     // unique
     let nm = name, n = 2; while (root.getObjectByName(nm)) nm = name + '_' + (n++);
     const samples = sampleLayer(l);
