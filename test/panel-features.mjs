@@ -8,8 +8,23 @@ if (!process.env.HAS_AE) process.env.HAS_AE = '1';
  *   node test/panel-features.mjs
  * Optional env: PANEL_HTML=index.html  PANEL_OPEN_KEY=...  HAS_3D=1  HAS_H5=1  HAS_AE=1
  */
-import { chromium } from 'playwright-core';
+import { createRequire } from 'module';
 import { createServer } from 'http';
+const _require = createRequire(import.meta.url);
+function _chromium() {
+  const tries = [
+    () => _require('playwright-core'),
+    () => _require('/usr/local/lib/pnpm/5/.pnpm/playwright-core@1.59.1/node_modules/playwright-core/index.js'),
+  ];
+  for (const fn of tries) {
+    try {
+      const m = fn();
+      return m.chromium || m.default?.chromium;
+    } catch {}
+  }
+  throw new Error('playwright-core not found');
+}
+const chromium = { launch: (...a) => _chromium().launch(...a) };
 import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync } from 'fs';
 import { execSync } from 'child_process';
 import { extname, join, dirname } from 'path';
@@ -50,6 +65,23 @@ try {
   await page.goto(`http://127.0.0.1:${port}/${htmlFile}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForSelector('#panel', { timeout: 20000 });
   await page.waitForTimeout(1200);
+  await page.evaluate(() => {
+    window.__api = function () {
+      const a = window.__app || {};
+      const g = window.__game || {};
+      const tool = window.__tool || {};
+      let S = null;
+      try { if (typeof window.__S === 'function') S = window.__S(); } catch (e) {}
+      S = S || g.S || a.S || window.S || {};
+      return Object.assign({ S }, a, tool, g, {
+        aeStart: g.aeStart || a.aeStart || window.__aeStart,
+        aeStop: g.aeStop || a.aeStop || window.__aeStop,
+        doExportAE: g.doExportAE || a.doExportAE || window.__aeExport,
+        doExport3D: g.doExport3D || a.doExport3D || window.__export3d,
+        doExportH5: g.doExportH5 || a.doExportH5 || window.__exportH5,
+      });
+    };
+  });
 
   const title = await page.$eval('#panelHead h1', el => el.textContent);
   rec('title-控制台', /控制台/.test(title), title.trim());
@@ -172,12 +204,12 @@ try {
 
   // auto-solve start
   const autoBefore = await page.evaluate(() => ({
-    has: !!(window.__app || window.__game || window.game),
+    has: !!((typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || window.game))),
   }));
   await page.click('#btnAuto');
   await page.waitForTimeout(800);
   const autoAfter = await page.evaluate(() => {
-    const a = window.__app || window.__game || {};
+    const a = (typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || {}));
     const running = !!(a.AUTO?.running || a.auto || a.autoSolveRunning || a.solving ||
       document.getElementById('btnAuto')?.classList.contains('on') ||
       /停止|取消/.test(document.getElementById('btnAuto')?.textContent || ''));
@@ -193,7 +225,7 @@ try {
   // recording start/stop (short)
   await page.click('#btnExpandAll').catch(() => {});
   await page.evaluate(() => {
-    const g = window.__app || window.__game || window.__tool || {};
+    const g = (typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || window.__tool || {}));
     const S = g.S || g.settings || window.S;
     if (S && 'aeWithRec' in S) S.aeWithRec = false;
     if (typeof g.set === 'function') { try { g.set('aeWithRec', false); } catch (e) {} }
@@ -285,54 +317,86 @@ try {
     }
   } catch (e) { rec('settings-import-restore', false, e.message); }
 
-  // ---- auto-solve runs to a win ----
+  // ---- auto-solve runs to a win (official fast path when available) ----
   try {
     await page.evaluate(() => {
-      const g = window.__app || window.__game || {};
-      const S = g.S || window.S;
-      if (!S) return;
+      const g = (typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || {}));
+      const S = g.S || window.S || {};
       const speed = {
-        animScale: 0.15, flyMs: 40, flyDuration: 40, handSpeed: 8, autoSpeed: 5, timerSec: 120,
+        animScale: 0.15, flyMs: 40, flyDuration: 40, handSpeed: 8, autoSpeed: 6, timerSec: 120,
         moveMs: 40, animMs: 40, stepMs: 30, autoDelay: 10, fingerMs: 40,
         autoWait: 10, recAuto: false, aeWithRec: false, endCard: false,
+        cupInterval: 40, cupFly: 40, boxGrow: 40, boxClose: 40, boxFlyDur: 40, slideSpeed: 8,
+        introSec: 0.05, chainSpeed: 8,
       };
-      for (const [k,v] of Object.entries(speed)) if (k in S) S[k] = v;
-      if (typeof g.setMany === 'function') { try { g.setMany({ ...speed, aeWithRec: false }); } catch (e) {} }
+      // Prefer per-key set(); zipper setMany also restarts the game.
+      if (typeof g.set === 'function') {
+        for (const [k, v] of Object.entries(speed)) { try { g.set(k, v); } catch (e) {} }
+      } else {
+        for (const [k, v] of Object.entries(speed)) if (k in S) S[k] = v;
+      }
       if (typeof g.newGame === 'function') { try { g.newGame(); } catch (e) { try { g.newGame(true); } catch (e2) {} } }
       const startAe = g.aeStart || window.__aeStart;
       if (typeof startAe === 'function') { try { startAe(); } catch (e) {} }
     });
-    await page.waitForTimeout(400);
-    const autoBtn = await page.$('#btnAuto');
-    if (autoBtn) await autoBtn.click();
-    else await page.evaluate(() => { const g = window.__app || window.__game || {}; if (g.autoSolve) g.autoSolve(); else if (g.startAuto) g.startAuto(); });
+    await page.waitForTimeout(200);
+    await page.evaluate(() => {
+      const g = (typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || {}));
+      if (typeof g.startAuto === 'function') g.startAuto();
+      else if (typeof g.autoSolve === 'function') g.autoSolve();
+    });
     const t0 = Date.now();
     const limit = +(process.env.AUTO_WIN_MS || 180000);
-    let win = false, info = '';
+    const caps = await page.evaluate(() => {
+      const g = (typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || {}));
+      return { advance: typeof g.advance === 'function', renderAt: typeof g.renderAt === 'function' };
+    });
+    if (caps.renderAt) {
+      await page.evaluate(() => { window.__nodraw = true; });
+    }
+    let win = false, info = '', simT = 0;
     while (Date.now() - t0 < limit) {
+      if (caps.advance) {
+        await page.evaluate(() => {
+          const g = (typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || {}));
+          try { g.advance(0.05); } catch (e) {}
+        });
+      } else if (caps.renderAt) {
+        simT += 1 / 30;
+        await page.evaluate((t) => {
+          const g = (typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || {}));
+          try { window.__vclock = t; g.renderAt(t); } catch (e) {}
+        }, simT);
+      } else {
+        await page.waitForTimeout(400);
+      }
       const st = await page.evaluate(() => {
-        const g = window.__app || window.__game || {};
+        const g = (typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || {}));
         const G = g.G || g.st || g.game || {};
+        const F = g.F || {};
         const ended = typeof g.ended === 'function' ? !!g.ended() : false;
-        const panel = G.panel || G.phase || '';
-        const st = G.state || G.over || '';
+        const panel = G.panel || G.phase || F.phase || '';
+        const st = G.state || G.over || F.state || '';
         const flags = [
           window.__finished, window.__win, G.win === true, G.cleared === true,
           panel === 'win' || panel === 'end',
           st === 'win' || st === 'end' || st === 'cleared',
+          F.phase === 'win',
+          (g.winsInRun || F.winsInRun || 0) > 0,
           ended && st !== 'fail' && panel !== 'fail',
         ];
-        const fail = !!(window.__failed || st === 'fail' || panel === 'fail' || G.over === 'fail');
-        return { finished: !!window.__finished, failed: fail, panel: String(panel||st), ended, any: flags.some(Boolean), btn: document.getElementById('btnAuto')?.textContent || '', cleared: !!G.cleared };
+        const fail = !!(window.__failed || st === 'fail' || panel === 'fail' || G.over === 'fail' || F.phase === 'fail');
+        return { finished: !!window.__finished, failed: fail, panel: String(panel||st), ended, any: flags.some(Boolean), btn: document.getElementById('btnAuto')?.textContent || '', cleared: !!G.cleared, phase: F.phase || '' };
       });
       info = JSON.stringify(st);
       if (st.failed && !st.finished && st.panel === 'fail') { win = false; info = 'ended as fail ' + info; break; }
       if (st.any && st.panel !== 'fail') { win = true; break; }
-      await page.waitForTimeout(800);
+      if (!caps.advance && !caps.renderAt) { /* already waited */ }
+      else await page.waitForTimeout(0);
     }
     rec('auto-solve-wins', win, info + ` ${((Date.now()-t0)/1000).toFixed(1)}s`);
     await page.evaluate(() => {
-      const g = window.__app || window.__game || {};
+      const g = (typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || {}));
       if (g.stopAuto) try { g.stopAuto(); } catch (e) {}
       const stopAe = g.aeStop || window.__aeStop;
       if (typeof stopAe === 'function') { try { stopAe(); } catch (e) {} }
@@ -362,14 +426,14 @@ try {
     const [dl] = await Promise.all([
       page.waitForEvent('download', { timeout: 180000 }),
       page.evaluate(async (which) => {
-        const g = window.__app || window.__game || {};
+        const g = (typeof window.__api === "function" ? window.__api() : (window.__app || window.__game || {}));
         const fn = which === 'ae'
           ? (g.doExportAE || g.aeExport || window.__aeExport)
           : which === '3d'
             ? (g.doExport3D || g.export3DZip || window.__export3d)
             : (g.doExportH5 || g.exportH5Zip || window.__exportH5);
         if (typeof fn !== 'function') throw new Error('no ' + which + ' api');
-        return await fn.call(g, true);
+        return await fn.call(g);
       }, which),
     ]);
     const name = dl.suggestedFilename();
