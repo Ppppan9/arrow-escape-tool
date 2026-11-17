@@ -5,6 +5,7 @@ import * as R from './render.js';
 import { Sfx } from './audio.js';
 import { REF_TAPS, REF_CAM, REF_GRID, REF_HAND0, REF_HAND, REF_HAND_DT } from './refseq.js';
 import { createAERecorder } from './ae/recorder.js';
+import { export3D } from './export3d/export3d.js';
 import { DEFAULT_HAND } from './default_hand.js';
 import { exportH5PlayableFromPage, applyPlayableMode, isPlayableNoHand, applyH5DevicePresetToSettings, markH5DeviceCustomIfSizeEdited, bindEditorDevicePreview } from './h5/index.js';
 
@@ -363,8 +364,16 @@ async function doExportAE(save = true, r0 = curRec()) {
   status('正在生成 AE 工程…'); const r = await aeRec.exportZip(r0); window.__aeLast = r;
   if (save) download(r.blob, r.name); status(`AE 工程：${r.stats.layers} 图层，${r.stats.keys} 关键帧`); return r;
 }
+
+async function doExport3D(save = true, r0 = curRec()) {
+  if (!r0) { toast('请先用“● 开始记录”记录一段（自动通关或手动游玩）'); return null; }
+  status('正在生成 3D 动画…');
+  const ae = await aeRec.exportZip(r0, { aeFps: String(+S.export3dFps || 30), aeSize: 'canvas', aeSampling: 'bake', aeNames: 'en', aeAudio: 'both' });
+  const r = await export3D({ S: { ...((r0 && r0.S) || S), export3dFps: S.export3dFps }, ae, toolId: APP_ID });
+  window.__e3dLast = r; if (save) download(r.blob, r.name); status(`3D 动画：${r.stats.nodes} 节点，${r.duration.toFixed(2)}s`); return r;
+}
 async function doExportH5() { try { return await exportH5PlayableFromPage({ toolId: APP_ID, S, stripDataUrls: [DEFAULT_HAND], status, toast }); } catch (e) { status('H5 导出失败：' + e.message); console.error(e); return null; } }
-const PANEL_ACTIONS = { aeToggle: () => aeActive() ? aeStopAndExport() : recStart(), aeExport: () => doExportAE(), exportH5: () => doExportH5(), levelEdit: openEditor, levelCheck, levelExport, levelImport, levelImage, levelRef };
+const PANEL_ACTIONS = { aeToggle: () => aeActive() ? aeStopAndExport() : recStart(), aeExport: () => doExportAE(), export3d: () => doExport3D(), exportH5: () => doExportH5(), levelEdit: openEditor, levelCheck, levelExport, levelImport, levelImage, levelRef };
 
 // ---------- 主循环 ----------
 function frameTick(t) {
@@ -419,6 +428,7 @@ function buildPanel() {
     });
     if (title.startsWith('画布')) det.insertAdjacentHTML('beforeend', '<div class="tip">点任意一条线（线身或箭头都行）：箭头前方直到边界没有别的线 → 整条线沿自己的路径蛇形滑出；被挡住 → 线变白、冲到挡路的线再退回。顺序随意。内置关卡 = 从参考视频第 1 帧逐格还原的哆啦A梦（48×50 格、200 条线）。</div>');
     if (title.startsWith('手指')) det.insertAdjacentHTML('beforeend', '<div class="tip">默认手指 = 其它核玩工具同款预设 hand.png（指尖锚点 0.2204 / 0.0367）；可选程序绘制的参考造型卡通手；上传透明 PNG 会覆盖。“参考视频顺序”= 逐帧还原的 27 次点击（4.4 / 10.95 / 20.62 / 40.22 / 42.38 秒是被挡住的点击）和镜头平移，之后自动求解直到清空。录制不会随自动通关自动开始（除非打开“自动录制”）。</div>');
+    if (title.startsWith('导出 3D')) det.insertAdjacentHTML('beforeend', '<div class="tip">复用 AE 记录（逐帧烘焙）。scene.glb 可直接导入 UE5 / C4D / Blender；FBX 由附带的 blender_import.py 在 Blender 里一键导出。</div>');
     if (title.startsWith('导出 H5')) det.insertAdjacentHTML('beforeend', '<div class="tip">试玩由玩家自己玩：导出包不含手指、默认不自动演示。预览与导出均按所选机型/自定义尺寸；选「自适应」才是全机型 contain/letterbox。玩家可拖动平移镜头。</div>');
     if (title.startsWith('导出 AE')) det.insertAdjacentHTML('beforeend', '<div class="tip">每条线 = 一个形状图层（路径 = 自身折线 + 箭头方向延长线，修剪路径 开始/结束 关键帧 = 蛇形滑动），箭头 = 独立形状图层（位置/旋转关键帧），全部父级到“镜头”空对象（位置/缩放关键帧 = 推镜与平移）。</div>');
     body.append(det);
@@ -453,7 +463,7 @@ window.__game = {
   autoSolve, startAuto, stopAuto, newGame, tapDesign, cellToDesign, toDesign, RX, RY, solveLevel, levelFromSettings, frameState,
   set(k, v) { S[k] = v; applyChange(k); buildPanel(); }, setMany(o) { Object.assign(S, o); saveSettings(S); buildPanel(); loadHand(); newGame(); },
   openEditor, closeEditor, randomLevel, editorDown, editorMove, editorUp, levelCheck, levelRef,
-  doExportAE, doExportH5, aeStart: () => recStart(), aeStop: () => aeStop(), aeActive: () => aeActive(), startRec, stopRec, get mediaRec() { return rec; }, migrate, APP_ID, APP_VERSION,
+  doExportAE, doExport3D, doExportH5, aeStart: () => recStart(), aeStop: () => aeStop(), aeActive: () => aeActive(), startRec, stopRec, get mediaRec() { return rec; }, migrate, APP_ID, APP_VERSION,
 };
 buildPanel(); loadHand(); newGame(); window.__ready = true; requestAnimationFrame(loop);
 

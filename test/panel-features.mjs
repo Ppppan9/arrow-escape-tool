@@ -1,6 +1,6 @@
 if (!process.env.PANEL_HTML) process.env.PANEL_HTML = 'index.html';
 if (!process.env.PANEL_OPEN_KEY) process.env.PANEL_OPEN_KEY = 'arrowEscapeTool.panelOpen.v1';
-if (!process.env.HAS_3D) process.env.HAS_3D = '0';
+if (!process.env.HAS_3D) process.env.HAS_3D = '1';
 if (!process.env.HAS_H5) process.env.HAS_H5 = '1';
 if (!process.env.HAS_AE) process.env.HAS_AE = '1';
 /**
@@ -10,7 +10,8 @@ if (!process.env.HAS_AE) process.env.HAS_AE = '1';
  */
 import { chromium } from 'playwright-core';
 import { createServer } from 'http';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
+import { execSync } from 'child_process';
 import { extname, join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -244,6 +245,192 @@ try {
   if (expectAe) rec('ae-controls-visible', /开始记录|导出 AE|停止并导出/.test(bodyText), '');
   if (expect3d) rec('3d-controls-visible', /导出 3D|GLB|Blender/.test(bodyText), '');
   if (expectH5) rec('h5-controls-visible', /导出 H5|试玩/.test(bodyText), '');
+
+
+  // ---- full functional: settings import restores a value ----
+  try {
+    const before = await page.evaluate(() => {
+      const rng = document.querySelector('#panelBody input[type=range]');
+      if (!rng) return null;
+      const key = rng.id?.replace(/^rng_|^sel_|^chk_/, '') || rng.dataset.key || '';
+      return { key, val: rng.value, min: rng.min, max: rng.max, step: rng.step || '1' };
+    });
+    if (!before) rec('settings-import-restore', false, 'no range');
+    else {
+      const [dl] = await Promise.all([
+        page.waitForEvent('download', { timeout: 8000 }),
+        page.click('#btnExport'),
+      ]);
+      const savedPath = await dl.path();
+      const raw = readFileSync(savedPath, 'utf8');
+      const changed = await page.evaluate((b) => {
+        const rng = document.querySelector('#panelBody input[type=range]');
+        if (!rng) return null;
+        let nv = +b.val + (+b.step || 1);
+        if (nv > +b.max) nv = +b.val - (+b.step || 1);
+        rng.value = String(nv);
+        rng.dispatchEvent(new Event('input', { bubbles: true }));
+        rng.dispatchEvent(new Event('change', { bubbles: true }));
+        return rng.value;
+      }, before);
+      rec('settings-import-changed', changed != null && String(changed) !== String(before.val), `${before.val} -> ${changed}`);
+      const input = await page.$('#importFile');
+      await input.setInputFiles(savedPath);
+      await page.waitForTimeout(600);
+      const restored = await page.evaluate((k) => {
+        const rng = k ? document.querySelector('#rng_' + k + ', [data-key="'+k+'"]') : document.querySelector('#panelBody input[type=range]');
+        return rng ? rng.value : null;
+      }, before.key);
+      rec('settings-import-restore', restored != null && String(restored) === String(before.val), `got ${restored}, want ${before.val}`);
+    }
+  } catch (e) { rec('settings-import-restore', false, e.message); }
+
+  // ---- auto-solve runs to a win ----
+  try {
+    await page.evaluate(() => {
+      const g = window.__app || window.__game || {};
+      const S = g.S || window.S;
+      if (!S) return;
+      const speed = {
+        animScale: 0.15, flyMs: 40, flyDuration: 40, handSpeed: 8, autoSpeed: 8,
+        moveMs: 40, animMs: 40, stepMs: 30, autoDelay: 10, fingerMs: 40,
+        autoWait: 10, recAuto: false, aeWithRec: false, endCard: false,
+      };
+      for (const [k,v] of Object.entries(speed)) if (k in S) S[k] = v;
+      if (typeof g.setMany === 'function') { try { g.setMany({ ...speed, aeWithRec: false }); } catch (e) {} }
+      if (typeof g.newGame === 'function') { try { g.newGame(); } catch (e) { try { g.newGame(true); } catch (e2) {} } }
+      const startAe = g.aeStart || window.__aeStart;
+      if (typeof startAe === 'function') { try { startAe(); } catch (e) {} }
+    });
+    await page.waitForTimeout(400);
+    const autoBtn = await page.$('#btnAuto');
+    if (autoBtn) await autoBtn.click();
+    else await page.evaluate(() => { const g = window.__app || window.__game || {}; if (g.autoSolve) g.autoSolve(); else if (g.startAuto) g.startAuto(); });
+    const t0 = Date.now();
+    const limit = +(process.env.AUTO_WIN_MS || 90000);
+    let win = false, info = '';
+    while (Date.now() - t0 < limit) {
+      const st = await page.evaluate(() => {
+        const g = window.__app || window.__game || {};
+        const G = g.G || g.st || g.game || {};
+        const ended = typeof g.ended === 'function' ? !!g.ended() : false;
+        const panel = G.panel || G.phase || '';
+        const st = G.state || G.over || '';
+        const flags = [
+          window.__finished, window.__win, G.win === true, G.cleared === true,
+          panel === 'win' || panel === 'end',
+          st === 'win' || st === 'end' || st === 'cleared',
+          ended && st !== 'fail' && panel !== 'fail',
+        ];
+        const fail = !!(window.__failed || st === 'fail' || panel === 'fail' || G.over === 'fail');
+        return { finished: !!window.__finished, failed: fail, panel: String(panel||st), ended, any: flags.some(Boolean), btn: document.getElementById('btnAuto')?.textContent || '', cleared: !!G.cleared };
+      });
+      info = JSON.stringify(st);
+      if (st.failed && !st.finished && st.panel === 'fail') { win = false; info = 'ended as fail ' + info; break; }
+      if (st.any && st.panel !== 'fail') { win = true; break; }
+      await page.waitForTimeout(800);
+    }
+    rec('auto-solve-wins', win, info + ` ${((Date.now()-t0)/1000).toFixed(1)}s`);
+    await page.evaluate(() => {
+      const g = window.__app || window.__game || {};
+      if (g.stopAuto) try { g.stopAuto(); } catch (e) {}
+      const stopAe = g.aeStop || window.__aeStop;
+      if (typeof stopAe === 'function') { try { stopAe(); } catch (e) {} }
+    });
+  } catch (e) { rec('auto-solve-wins', false, e.message); }
+
+  // ---- AE / 3D / H5 real zip downloads + contents ----
+  page.setDefaultTimeout(180000);
+  const outDir = '/tmp/panel-export-check';
+  try { mkdirSync(outDir, { recursive: true }); } catch (e) {}
+  const dumpB64 = (name, b64) => { const p = outDir + '/' + name.replace(/[^\w.-]+/g,'_'); writeFileSync(p, Buffer.from(b64, 'base64')); return p; };
+  const zipList = (p) => { try { return execSync(`python3 -c 'import zipfile,sys; print(chr(10).join(zipfile.ZipFile(sys.argv[1]).namelist()))' ${JSON.stringify(p)}`, { encoding: 'utf8' }); } catch (e) { return 'ERR '+e.message; } };
+
+  const inspectPy = join(dirname(fileURLToPath(import.meta.url)), 'inspect-zip.py');
+  const inspectZip = (p) => { try { return execSync(`python3 ${JSON.stringify(inspectPy)} ${JSON.stringify(p)}`, { encoding: 'utf8' }); } catch (e) { return zipList(p); } };
+    const nameOk = (kind, name) => {
+    const n = String(name || '');
+    const stamp = /_?\d{8}_\d{6}([_.-][a-z0-9-]+)?\.zip$/i;
+    if (kind === 'ae') return stamp.test(n) && /(_ae_export_|_ae_[a-z0-9-]+_)/i.test(n);
+    if (kind === '3d') return stamp.test(n) && /(_3d_export_|_3d_[a-z0-9-]+_)/i.test(n);
+    if (kind === 'h5') return stamp.test(n) && /(_h5_playable_|_h5_[a-z0-9-]+_)/i.test(n);
+    return false;
+  };
+
+  async function exportViaApi(which) {
+    return page.evaluate(async (which) => {
+      const g = window.__app || window.__game || {};
+      const fn = which === 'ae'
+        ? (g.doExportAE || g.aeExport || window.__aeExport)
+        : which === '3d'
+          ? (g.doExport3D || g.export3DZip || window.__export3d)
+          : (g.doExportH5 || g.exportH5Zip || window.__exportH5);
+      if (typeof fn !== 'function') return { err: 'no ' + which + ' api' };
+      const out = await fn.call(g, true);
+      const first = Array.isArray(out) ? out[0] : out;
+      const blob = first && (first.blob || (first instanceof Blob ? first : null));
+      const name = first && first.name;
+      if (!blob) return { err: 'no blob', name };
+      const buf = new Uint8Array(await blob.arrayBuffer());
+      let s = ''; const step = 32768; for (let i = 0; i < buf.length; i += step) s += String.fromCharCode.apply(null, buf.subarray(i, i + step));
+      return { name, b64: btoa(s), size: buf.length };
+    }, which);
+  }
+
+  if (expectAe) {
+    try {
+      const r = await exportViaApi('ae');
+      if (r.err) rec('ae-export-zip', false, r.err);
+      else {
+        const pth = dumpB64(r.name, r.b64);
+        const names = inspectZip(pth);
+        const hasJsx = /build_ae_project\.jsx|\.jsx/.test(names);
+        const fnOk = nameOk('ae', r.name);
+        rec('ae-export-zip', hasJsx && fnOk && r.size > 100, `${r.name} ${r.size}b jsx=${hasJsx} nameOk=${fnOk}`);
+      }
+    } catch (e) { rec('ae-export-zip', false, e.message); }
+  }
+
+  if (expect3d) {
+    try {
+      const r = await exportViaApi('3d');
+      if (r.err) rec('3d-export-zip', false, r.err);
+      else {
+        const pth = dumpB64(r.name, r.b64);
+        const names = inspectZip(pth);
+        const hasGlb = /scene\\.glb/.test(names);
+        const fnOk = nameOk('3d', r.name);
+        rec('3d-export-zip', hasGlb && fnOk && r.size > 200, `${r.name} ${r.size}b nameOk=${fnOk} ${names.split('\n').slice(0,8).join(',')}`);
+        if (hasGlb) {
+          try {
+            const glbPath = outDir + '/scene.glb';
+            execSync(`python3 ${JSON.stringify(inspectPy)} ${JSON.stringify(pth)} extract-glb ${JSON.stringify(outDir)}`)
+            const validatorUrl = new URL('gltf-validator/module.mjs', 'file:///workspace/block-tower-tool/node_modules/');
+            const { validateBytes } = await import('/workspace/block-tower-tool/node_modules/gltf-validator/module.mjs');
+            const report = await validateBytes(new Uint8Array(readFileSync(glbPath)));
+            const ok = report?.issues?.numErrors === 0;
+            rec('3d-glb-valid', ok, `errors=${report?.issues?.numErrors} warnings=${report?.issues?.numWarnings}`);
+          } catch (e) { rec('3d-glb-valid', false, e.message); }
+        } else rec('3d-glb-valid', false, 'no scene.glb');
+      }
+    } catch (e) { rec('3d-export-zip', false, e.message); rec('3d-glb-valid', false, 'no zip'); }
+  } else {
+    rec('3d-export-zip', true, 'n/a'); rec('3d-glb-valid', true, 'n/a');
+  }
+
+  if (expectH5) {
+    try {
+      const r = await exportViaApi('h5');
+      if (r.err) rec('h5-export-zip', false, r.err);
+      else {
+        const pth = dumpB64(r.name, r.b64);
+        const names = inspectZip(pth);
+        const htmls = names.split('\n').filter(n => /index\\.html$/i.test(n.trim()));
+        const fnOk = nameOk('h5', r.name);
+        rec('h5-export-zip', htmls.length > 0 && fnOk && r.size > 200, `${r.name} ${r.size}b nameOk=${fnOk} htmls=${htmls.length} e.g. ${htmls.slice(0,6).join(',')}`);
+      }
+    } catch (e) { rec('h5-export-zip', false, e.message); }
+  }
 
   // mobile stacking
   await page.setViewportSize({ width: 390, height: 844 });
