@@ -399,11 +399,13 @@ try {
           if (Date.now() - t0 > limit) break;
         }
       } else if (isZuma) {
-        applyKnobs({ seed: 1, introSec: 0, chainSpeed: 2.5, autoSpeed: 6 });
+        // official run-test: only seed 1; kitchen-sink knobs (e.g. introSec 0) can dump the chain into the hole immediately
         window.__nodraw = true;
+        if (typeof g.setMany === 'function') { try { g.setMany({ seed: 1 }); } catch (e) {} }
         let t = 500000;
         try { g.renderAt(t); } catch (e) {}
         if (typeof g.newGame === 'function') { try { g.newGame(); } catch (e) {} }
+        try { window.__failed = false; window.__finished = false; } catch (e) {}
         startAe();
         how = 'planShoot';
         let cd = 0;
