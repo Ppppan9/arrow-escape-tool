@@ -462,6 +462,29 @@ try {
           capAe();
           await new Promise(r => setTimeout(r, 150));
         }
+      } else if (/block-shooter/i.test(id)) {
+        // official run-test: only these knobs, autoSolve + renderAt, no newGame, no kitchen-sink
+        window.__no3d = true;
+        const cfg = { level: 'random', seed: 3, randW: 15, randH: 8, randD: 6, randColors: 3, autoSpeed: 4, autoStartDelay: 0 };
+        if (typeof g.set === 'function') {
+          for (const [k, v] of Object.entries(cfg)) { try { g.set(k, v); } catch (e) {} }
+        } else {
+          applyKnobs(cfg);
+        }
+        try { window.__failed = false; window.__finished = false; } catch (e) {}
+        let t = 100000;
+        try { g.renderAt(t); } catch (e) {}
+        startAe();
+        try { g.autoSolve(); } catch (e) {}
+        how = 'renderAt';
+        const tGame0 = t;
+        while (!verdict() && (t - tGame0) < 400 * 1000) {
+          t += 33.33;
+          try { g.renderAt(t); } catch (e) {}
+          capAe((t - tGame0) / 1000);
+          await yieldTick();
+          if (Date.now() - t0 > limit) break;
+        }
       } else {
         applyKnobs(/block-shooter/i.test(id)
           ? { level: 'random', seed: 3, randW: 15, randH: 8, randD: 6, randColors: 3, autoSpeed: 4, autoStartDelay: 0, render3d: false }
