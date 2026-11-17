@@ -334,24 +334,36 @@ try {
         introSec: 0.05, chainSpeed: 8,
       };
       const hasAdvance = typeof g.advance === 'function';
-      if (typeof g.set === 'function') {
-        for (const [k, v] of Object.entries(speed)) { try { g.set(k, v); } catch (e) {} }
-      } else if (typeof g.setMany === 'function') {
-        try { g.setMany(speed); } catch (e) {}
+      if (hasAdvance) {
+        // zipper official: only the knobs that path uses; each set() rebuilds the panel
+        try { g.set('autoMode', 'video'); } catch (e) {}
+        try { g.set('handShow', false); } catch (e) {}
+        try { g.set('aeWithRec', false); } catch (e) {}
+        try { g.set('recAuto', false); } catch (e) {}
+        if (typeof g.newGame === 'function') { try { g.newGame(0); } catch (e) { try { g.newGame(); } catch (e2) {} } }
+        try { g.advance(0.7, false); } catch (e) {}
+        const startAe = g.aeStart || window.__aeStart;
+        if (typeof startAe === 'function') { try { startAe.call(g); } catch (e) {} }
+        try { g.startAuto(); } catch (e) {}
       } else {
-        for (const [k, v] of Object.entries(speed)) if (S && k in S) S[k] = v;
+        if (typeof g.set === 'function') {
+          for (const [k, v] of Object.entries(speed)) { try { g.set(k, v); } catch (e) {} }
+        } else if (typeof g.setMany === 'function') {
+          try { g.setMany(speed); } catch (e) {}
+        } else {
+          for (const [k, v] of Object.entries(speed)) if (S && k in S) S[k] = v;
+        }
+        if (typeof g.renderAt === 'function') {
+          try { window.__T = window.__T || 2e6; g.renderAt(window.__T); } catch (e) {}
+        }
+        if (typeof g.newGame === 'function') { try { g.newGame(); } catch (e) { try { g.newGame(true); } catch (e2) {} } }
+        const startAe = g.aeStart || window.__aeStart;
+        if (typeof startAe === 'function') { try { startAe.call(g); } catch (e) {} }
+        try {
+          if (typeof g.autoSolve === 'function') g.autoSolve();
+          else if (typeof g.startAuto === 'function') g.startAuto();
+        } catch (e) {}
       }
-      if (typeof g.renderAt === 'function') {
-        try { window.__T = window.__T || 2e6; g.renderAt(window.__T); } catch (e) {}
-      }
-      if (typeof g.newGame === 'function') { try { g.newGame(); } catch (e) { try { g.newGame(true); } catch (e2) {} } }
-      const startAe = g.aeStart || window.__aeStart;
-      if (typeof startAe === 'function') { try { startAe.call(g); } catch (e) {} }
-      // autoSolve first (pin/arrow/zuma); startAuto for zipper / ring-untangle. autoSolve on arrow starts if idle.
-      try {
-        if (typeof g.autoSolve === 'function') g.autoSolve();
-        else if (typeof g.startAuto === 'function') g.startAuto();
-      } catch (e) {}
 
       const verdict = () => {
         const G = g.G || g.st || g.game || {};
